@@ -32,6 +32,16 @@ class Backend(ABC):
         """
         raise NotImplementedError
 
+    def close(self) -> None:
+        """
+        Gracefully close backend resources.
+
+        Default implementation is a no-op.
+        Backends that manage network resources
+        (e.g. Redis) SHOULD override this.
+        """
+        return None
+
 
 class AsyncBackend(ABC):
     """
@@ -45,4 +55,16 @@ class AsyncBackend(ABC):
         keys: Sequence[str],
         args: Sequence[Any],
     ) -> List[Any]:
+        """
+        Execute a Lua script atomically (async).
+        """
         raise NotImplementedError
+
+    async def close(self) -> None:
+        """
+        Gracefully close backend resources.
+
+        Default implementation is a no-op.
+        Async backends SHOULD override this.
+        """
+        return None
