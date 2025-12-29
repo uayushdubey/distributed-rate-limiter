@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Sequence
+from typing import Any, Sequence
 
 
 class RateLimitAlgorithm(ABC):
@@ -19,16 +19,11 @@ class RateLimitAlgorithm(ABC):
     def lua_script(self) -> str:
         """
         Return the Lua script implementing the algorithm.
-
-        The script MUST:
-        - Be atomic
-        - Use Redis server time
-        - Return a fixed result structure
         """
         raise NotImplementedError
 
     @abstractmethod
-    def args(self) -> List:
+    def args(self) -> Sequence[Any]:
         """
         Return arguments passed to the Lua script (ARGV).
         """
