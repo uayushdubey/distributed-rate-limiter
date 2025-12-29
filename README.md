@@ -378,7 +378,7 @@ Deploy separate Redis instances per region and configure your rate limiter accor
 
 - **Issues**: [GitHub Issues](https://github.com/uayushdubey/distributed-rate-limiter/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/uayushdubey/distributed-rate-limiter/discussions)
-- **Security**: Report security issues to security@example.com
+- **Security**: Report security issues to work.ayushkumardubey@gmail.com
 
 ## Acknowledgments
 
