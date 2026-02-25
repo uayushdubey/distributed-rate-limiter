@@ -1,390 +1,263 @@
 # distributed-rate-limiter
 
-A production-grade, Redis-backed, horizontally scalable Python rate limiting library.
+A production-grade, Redis-backed, horizontally scalable traffic governance library for Python.
+
+Designed for high-concurrency APIs, SaaS platforms, ML inference systems, and distributed applications.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PyPI version](https://badge.fury.io/py/distributed-rate-limiter.svg)](https://badge.fury.io/py/distributed-rate-limiter)
 
-## Features
+---
 
-- **Library-first**: Self-hosted, open-source, no SaaS dependencies
-- **Framework-agnostic**: Works with FastAPI, Flask, or any Python application
-- **Horizontally scalable**: Stateless design with Redis as the single source of truth
-- **Atomic operations**: Lua scripts ensure correctness under concurrency
-- **Sync + Async**: Native support for both synchronous and asynchronous code
-- **Security-first**: Hashed identities, no PII storage, configurable failure modes
-- **Zero dependencies**: Core library only requires Redis
+## Why distributed-rate-limiter?
 
-## Installation
+- Deterministic under concurrency (Lua atomicity)
+- Redis TIME-based (clock-skew resistant)
+- Cost-aware (weighted tokens)
+- Burst control
+- RFC-compliant RateLimit headers
+- Sync + Async support
+- Fail-open / Fail-closed modes
+- No in-memory state
+- Enterprise-ready architecture
+
+---
+
+# Installation
 
 ```bash
 pip install distributed-rate-limiter
-```
-
-### Optional dependencies
-
-```bash
-# For async support
+Optional extras
 pip install distributed-rate-limiter[async]
-
-# For FastAPI integration
 pip install distributed-rate-limiter[fastapi]
-
-# For Flask integration
 pip install distributed-rate-limiter[flask]
-
-# Install all extras
 pip install distributed-rate-limiter[all]
-```
-
-## Quick Start
-
-### Basic Usage
-
-```python
+Quick Start
+Basic Usage
 from distributed_rate_limiter import RateLimiter
 
-# Initialize the rate limiter
 limiter = RateLimiter(
     redis_url="redis://localhost:6379",
-    rate=100,           # 100 requests
-    period=60,          # per 60 seconds
+    rate=100,
+    per=60,
+    burst=200,
     namespace="myapp"
 )
 
-# Check if request is allowed
-identity = "user:12345"  # or IP address, API key, etc.
-result = limiter.allow(identity)
+allowed, info = limiter.allow("user:123")
 
-if result.allowed:
-    print(f"Request allowed. Remaining: {result.remaining}")
+if allowed:
+    print("Allowed")
+    print("Remaining:", info.remaining)
 else:
-    print(f"Rate limited. Retry after: {result.reset_timestamp}")
-```
+    print("Blocked")
+    print("Retry after:", info.retry_after)
+Weighted Token Consumption (Cost-Based Throttling)
 
-### Async Usage
+Useful for:
 
-```python
-from distributed_rate_limiter import AsyncRateLimiter
+LLM token usage
 
-limiter = AsyncRateLimiter(
+File size-based throttling
+
+Tier-based billing
+
+GPU workload shaping
+
+allowed, info = limiter.allow(
+    "user:123",
+    cost=5
+)
+Async Usage
+limiter = RateLimiter(
     redis_url="redis://localhost:6379",
     rate=100,
-    period=60
+    per=60,
+    async_mode=True
 )
 
-result = await limiter.allow_async("user:12345")
-```
-
-### FastAPI Integration
-
-```python
-from fastapi import FastAPI, Request, HTTPException
-from distributed_rate_limiter.middleware import FastAPIRateLimitMiddleware
+allowed, info = await limiter.allow_async("user:123")
+FastAPI Integration
+from fastapi import FastAPI
+from distributed_rate_limiter.middleware import FastAPIRateLimiter
+from distributed_rate_limiter import RateLimiter
 
 app = FastAPI()
 
-app.add_middleware(
-    FastAPIRateLimitMiddleware,
+limiter = RateLimiter(
     redis_url="redis://localhost:6379",
     rate=100,
-    period=60,
-    identity_extractor=lambda request: request.client.host
+    per=60,
+    async_mode=True
 )
 
-@app.get("/api/data")
-async def get_data():
-    return {"message": "Hello, World!"}
-```
+app.middleware("http")(
+    FastAPIRateLimiter(
+        limiter,
+        trust_proxy=True
+    )
+)
 
-### Flask Integration
+Automatically sets:
 
-```python
+RateLimit-Limit
+
+RateLimit-Remaining
+
+RateLimit-Reset
+
+Retry-After (on 429)
+
+Flask Integration
 from flask import Flask
 from distributed_rate_limiter.decorators import rate_limit
+from distributed_rate_limiter import RateLimiter
 
 app = Flask(__name__)
 
-@app.route("/api/data")
-@rate_limit(
+limiter = RateLimiter(
     redis_url="redis://localhost:6379",
     rate=100,
-    period=60,
-    identity_extractor=lambda: request.remote_addr
+    per=60
 )
-def get_data():
-    return {"message": "Hello, World!"}
-```
 
-## Algorithms
+@app.route("/api")
+@rate_limit(limiter, trust_proxy=True)
+def api():
+    return {"ok": True}
+Algorithm
+Token Bucket (Default)
 
-### Token Bucket (Default)
+Smooth rate limiting with burst support.
 
-The Token Bucket algorithm provides smooth rate limiting with burst control.
-
-```python
-limiter = RateLimiter(
+RateLimiter(
     redis_url="redis://localhost:6379",
-    algorithm="token_bucket",  # default
     rate=100,
-    period=60,
-    burst=20  # allow bursts up to 20 requests
+    per=60,
+    burst=200
 )
-```
+Characteristics
 
-**Characteristics:**
-- O(1) Redis operations
-- O(1) memory per identity
-- Smooth token refill
-- Configurable burst capacity
-- Clock-skew resistant (uses Redis TIME)
+O(1) Redis operations
 
-### Sliding Window (Coming Soon)
+O(1) memory per identity
 
-A sliding window algorithm will be available in a future release.
+Weighted tokens supported
 
-## Configuration
+Atomic Lua execution
 
-### Redis Connection
+Redis TIME-based refill
 
-```python
-# Basic connection
-limiter = RateLimiter(redis_url="redis://localhost:6379")
+Auto-expiring keys
 
-# With password
-limiter = RateLimiter(redis_url="redis://:password@localhost:6379")
+Configuration
+Failure Modes
+RateLimiter(fail_strategy="open")   # default
+RateLimiter(fail_strategy="closed")
+Namespacing
+RateLimiter(namespace="api")
+RateLimiter(namespace="auth")
 
-# Redis Cluster
-limiter = RateLimiter(redis_url="redis://localhost:6379", cluster_mode=True)
+Redis key format:
 
-# Custom Redis client
-import redis
-client = redis.Redis(host="localhost", port=6379, db=0)
-limiter = RateLimiter(redis_client=client)
-```
+<namespace>:<algorithm>:<sha256(identity)>
+Observability
 
-### Failure Modes
+Hooks:
 
-Configure how the limiter behaves when Redis is unavailable:
+def on_allow(identity, info):
+    print(info.to_dict())
 
-```python
-# Fail open: allow traffic when Redis is down (default)
-limiter = RateLimiter(
+def on_block(identity, info):
+    print("Blocked:", info.retry_after)
+
+def on_error(exc):
+    print("Backend error:", exc)
+
+RateLimiter(
     redis_url="redis://localhost:6379",
-    fail_strategy="open"
-)
-
-# Fail closed: block traffic when Redis is down
-limiter = RateLimiter(
-    redis_url="redis://localhost:6379",
-    fail_strategy="closed"
-)
-```
-
-### Namespacing
-
-Use namespaces to isolate rate limits for different services or endpoints:
-
-```python
-api_limiter = RateLimiter(
-    redis_url="redis://localhost:6379",
-    namespace="api"
-)
-
-auth_limiter = RateLimiter(
-    redis_url="redis://localhost:6379",
-    namespace="auth",
-    rate=10,
-    period=60
-)
-```
-
-## Observability
-
-Add hooks to monitor rate limiting behavior:
-
-```python
-def on_allow(identity: str, info: dict):
-    print(f"Allowed: {identity}, remaining: {info['remaining']}")
-
-def on_block(identity: str, info: dict):
-    print(f"Blocked: {identity}, reset at: {info['reset_timestamp']}")
-
-def on_error(exception: Exception):
-    print(f"Error: {exception}")
-
-limiter = RateLimiter(
-    redis_url="redis://localhost:6379",
+    rate=100,
+    per=60,
     on_allow=on_allow,
     on_block=on_block,
     on_error=on_error
 )
-```
+Security
 
-## Security
+SHA-256 identity hashing
 
-### Identity Hashing
+No raw identities stored
 
-All identities are SHA-256 hashed before being stored in Redis:
+No PII inspection
 
-```python
-# Raw identity never stored in Redis
-identity = "user@example.com"  # Hashed to SHA-256
-result = limiter.allow(identity)
-```
+No in-memory fallback
 
-### No PII Storage
+Configurable failure modes
 
-- Identities are hashed with SHA-256
-- No personally identifiable information stored in Redis
-- No request body inspection
-- No secrets logged or stored
+Performance
 
-### Redis Key Format
+Single Redis round-trip
 
-```
-<namespace>:<algorithm>:<sha256(identity)>
-```
+Atomic Lua execution
 
-Example:
-```
-myapp:token_bucket:a7b3c9d1e2f4...
-```
+Stateless application layer
 
-## Performance
+Horizontally scalable
 
-- **O(1) Redis operations** per request
-- **O(1) memory** per unique identity
-- **Atomic Lua scripts** prevent race conditions
-- **Auto-expiring keys** minimize memory usage
-- **Horizontally scalable** with stateless Python processes
+O(1) operations per request
 
-## Architecture
+Architecture
+Application
+    ↓
+RateLimiter
+    ↓
+Algorithm (Token Bucket)
+    ↓
+Redis Backend (Lua)
+    ↓
+Redis
+Design Principles
 
-```
-┌─────────────────┐
-│  Your App       │
-│  (Sync/Async)   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  RateLimiter    │
-│  Public API     │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Algorithm      │
-│  (Token Bucket) │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Redis Backend  │
-│  (Lua Scripts)  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Redis Server   │
-│  (Single Truth) │
-└─────────────────┘
-```
+Redis is the single source of truth
 
-## Design Principles
+Deterministic distributed behavior
 
-1. **Redis is the single source of truth**: No in-memory state in Python processes
-2. **Atomic operations**: All state changes use Lua scripts
-3. **Clock-skew resistant**: Uses Redis TIME, not Python time
-4. **Fail-fast**: No retries, no backoff, clear failure modes
-5. **Framework-agnostic**: Core library has zero framework dependencies
-6. **API stability**: Backward compatibility is a priority
+No in-memory fallback
 
-## Testing
+Cost-aware traffic governance
 
-```bash
-# Install development dependencies
-pip install -e ".[dev]"
+Clean abstraction layers
 
-# Run tests
-pytest
+Backward-compatible API evolution
 
-# Run tests with coverage
-pytest --cov=distributed_rate_limiter
+Roadmap
 
-# Run tests against Redis
-docker run -d -p 6379:6379 redis:7-alpine
-pytest
-```
+Sliding Window algorithm
 
-## Requirements
+Concurrency limiter (ML/GPU workloads)
 
-- Python 3.9+
-- Redis 5.0+ (self-hosted)
-- redis-py 4.0+
+Prometheus metrics integration
 
-## Contributing
+OpenTelemetry tracing
 
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details.
+Sharded buckets (hot-key scaling)
 
-### Development Setup
+Standalone service mode
 
-```bash
-git clone https://github.com/yourusername/distributed-rate-limiter.git
-cd distributed-rate-limiter
-pip install -e ".[dev]"
-```
+FAQ
+Why Redis?
 
-## License
+Redis provides atomic Lua execution, essential for correctness under distributed concurrency.
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Why no in-memory fallback?
 
-## Roadmap
+In-memory fallback breaks horizontal scaling correctness.
 
-- [x] Token Bucket algorithm
-- [x] Sync and async support
-- [x] FastAPI middleware
-- [x] Flask decorators
-- [ ] Sliding Window algorithm
-- [ ] Prometheus metrics integration
-- [ ] OpenTelemetry tracing support
-- [ ] Rate limit headers (RateLimit-* RFC)
+Multi-region support?
 
-## FAQ
+Deploy independent Redis per region. Global synchronization is intentionally not handled.
 
-### Why Redis only?
+License
 
-Redis provides atomic operations via Lua scripts, which is essential for correctness under horizontal scaling. We intentionally keep the backend simple and reliable.
-
-### Why no in-memory fallback?
-
-In-memory state breaks horizontal scaling correctness. When Redis is unavailable, you should either fail open (allow traffic) or fail closed (block traffic), not fall back to incorrect rate limiting.
-
-### Can I use this with Redis Cluster?
-
-Yes, but be aware that Lua scripts must operate on a single node. Use consistent hashing or the `{hash_tag}` feature to ensure related keys are on the same node.
-
-### Does this support distributed tracing?
-
-Not built-in, but you can add tracing via the observability hooks (`on_allow`, `on_block`, `on_error`).
-
-### How do I handle multi-region deployments?
-
-Deploy separate Redis instances per region and configure your rate limiter accordingly. This library does not handle cross-region synchronization.
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/uayushdubey/distributed-rate-limiter/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/uayushdubey/distributed-rate-limiter/discussions)
-- **Security**: Report security issues to work.ayushkumardubey@gmail.com
-
-## Acknowledgments
-
-Built with inspiration from:
-- Redis INCR-based rate limiting patterns
-- Token bucket algorithm implementations
-- Production rate limiting experiences
-
----
+MIT
