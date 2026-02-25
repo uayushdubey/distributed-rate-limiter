@@ -2,15 +2,23 @@ from abc import ABC, abstractmethod
 from typing import Any, List, Sequence
 
 
-class Backend(ABC):
-    """
-    Synchronous backend interface for executing Lua scripts.
+# ==========================================================
+# Shared Backend Capabilities
+# ==========================================================
 
-    Implementations MUST:
-    - Execute the script atomically
+class BaseBackend(ABC):
+    """
+    Common backend contract.
+
+    All backends MUST:
+    - Execute Lua scripts atomically
     - Perform exactly one backend round-trip
     - Return raw Lua results without mutation
     """
+
+    # ------------------------------------------------------
+    # Required
+    # ------------------------------------------------------
 
     @abstractmethod
     def execute(
@@ -32,20 +40,62 @@ class Backend(ABC):
         """
         raise NotImplementedError
 
+    # ------------------------------------------------------
+    # Optional (but recommended for enterprise)
+    # ------------------------------------------------------
+
+    def health_check(self) -> bool:
+        """
+        Check backend availability.
+
+        Default implementation assumes healthy.
+        Backends managing network connections SHOULD override.
+        """
+        return True
+
+    def get_time(self) -> float:
+        """
+        Optional backend time source.
+
+        Used for debugging / observability.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            "Backend does not implement get_time()"
+        )
+
     def close(self) -> None:
         """
         Gracefully close backend resources.
 
         Default implementation is a no-op.
-        Backends that manage network resources
-        (e.g. Redis) SHOULD override this.
         """
         return None
 
 
+# ==========================================================
+# Synchronous Backend
+# ==========================================================
+
+class Backend(BaseBackend):
+    """
+    Synchronous backend interface.
+    """
+    pass
+
+
+# ==========================================================
+# Asynchronous Backend
+# ==========================================================
+
 class AsyncBackend(ABC):
     """
-    Asynchronous backend interface for executing Lua scripts.
+    Asynchronous backend interface.
+
+    Async backends MUST:
+    - Execute scripts atomically
+    - Perform exactly one round-trip
+    - Return raw Lua results
     """
 
     @abstractmethod
@@ -55,16 +105,26 @@ class AsyncBackend(ABC):
         keys: Sequence[str],
         args: Sequence[Any],
     ) -> List[Any]:
-        """
-        Execute a Lua script atomically (async).
-        """
         raise NotImplementedError
+
+    async def health_check(self) -> bool:
+        """
+        Async health check.
+        Default assumes healthy.
+        """
+        return True
+
+    async def get_time(self) -> float:
+        """
+        Optional backend time source (async).
+        """
+        raise NotImplementedError(
+            "Async backend does not implement get_time()"
+        )
 
     async def close(self) -> None:
         """
         Gracefully close backend resources.
-
-        Default implementation is a no-op.
-        Async backends SHOULD override this.
+        Default no-op.
         """
         return None

@@ -8,10 +8,12 @@ def rate_limit(
     limiter,
     *,
     key_func: Optional[Callable] = None,
+    cost_func: Optional[Callable] = None,
     status_code: int = 429,
+    trust_proxy: bool = False,
 ):
     """
-    Flask decorator for rate limiting routes.
+    Enterprise-grade Flask decorator for rate limiting routes.
 
     Example:
         @app.route("/api")
@@ -25,25 +27,65 @@ def rate_limit(
             "Flask rate limiting requires RateLimiter(async_mode=False)"
         )
 
+    def resolve_identity():
+        if key_func:
+            return key_func()
+
+        if trust_proxy:
+            forwarded = flask.request.headers.get("X-Forwarded-For")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+
+        return flask.request.remote_addr
+
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            # Resolve identity
-            if key_func:
-                identity = key_func()
-            else:
-                identity = flask.request.remote_addr
 
-            allowed, info = limiter.allow(identity)
+            identity = resolve_identity()
 
-            if not allowed:
+            if not identity:
                 flask.abort(status_code)
 
-            # Store info for optional use in view
+            cost = 1
+            if cost_func:
+                try:
+                    cost = int(cost_func())
+                except Exception:
+                    cost = 1
+
+            allowed, info = limiter.allow(identity, cost=cost)
+
+            # ----------------------------------------
+            # Blocked
+            # ----------------------------------------
+            if not allowed:
+                response = flask.make_response(
+                    {"detail": "Rate limit exceeded"},
+                    status_code,
+                )
+
+                if info:
+                    response.headers.update(info.as_headers())
+                    response.headers["Retry-After"] = str(
+                        info.retry_after
+                    )
+
+                return response
+
+            # ----------------------------------------
+            # Allowed
+            # ----------------------------------------
+            response = fn(*args, **kwargs)
+
+            # Normalize response object
+            response = flask.make_response(response)
+
             if info:
+                response.headers.update(info.as_headers())
                 flask.g.rate_limit = info
 
-            return fn(*args, **kwargs)
+            return response
 
         return wrapper
 

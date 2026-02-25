@@ -15,6 +15,10 @@ class RateLimitAlgorithm(ABC):
     #: Human-readable algorithm name (used in Redis key namespace)
     name: str
 
+    # -----------------------------------------------------
+    # Required Methods
+    # -----------------------------------------------------
+
     @abstractmethod
     def lua_script(self) -> str:
         """
@@ -23,11 +27,25 @@ class RateLimitAlgorithm(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def args(self) -> Sequence[Any]:
+    def static_args(self) -> Sequence[Any]:
         """
-        Return arguments passed to the Lua script (ARGV).
+        Return static algorithm arguments (rate, period, burst, etc).
+
+        These are constant per limiter instance.
         """
         raise NotImplementedError
+
+    # -----------------------------------------------------
+    # Optional Overrides
+    # -----------------------------------------------------
+
+    def dynamic_args(self, **kwargs) -> Sequence[Any]:
+        """
+        Return request-level arguments (e.g., cost, weight).
+
+        Default: no dynamic arguments.
+        """
+        return []
 
     def redis_key_suffix(self) -> str:
         """

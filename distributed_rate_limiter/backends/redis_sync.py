@@ -1,17 +1,21 @@
-from typing import Any, List, Sequence
+from typing import Any, List, Sequence, Optional
 import hashlib
-
 import redis
+from redis.exceptions import RedisError
 
 from .base import Backend
 
 
 class RedisSyncBackend(Backend):
     """
-    Synchronous Redis backend using redis-py.
+    Enterprise-grade synchronous Redis backend.
 
-    This backend is safe for multi-threaded environments
-    and uses Redis Lua scripts for atomicity.
+    Features:
+    - Lua script caching
+    - NOSCRIPT safe execution
+    - Health checks
+    - Configurable connection pool
+    - Timeout hardened
     """
 
     def __init__(
@@ -20,35 +24,31 @@ class RedisSyncBackend(Backend):
         *,
         socket_timeout: float = 1.0,
         socket_connect_timeout: float = 1.0,
+        max_connections: int = 100,
         ping_on_start: bool = True,
     ):
         self._client = redis.Redis.from_url(
             redis_url,
             socket_timeout=socket_timeout,
             socket_connect_timeout=socket_connect_timeout,
-            decode_responses=False,  # keep raw bytes
+            max_connections=max_connections,
+            decode_responses=False,
         )
 
-        # script_hash -> registered Lua script
         self._script_cache: dict[str, Any] = {}
 
-        # Optional early Redis connectivity check
         if ping_on_start:
             self._client.ping()
 
+    # --------------------------
+    # Script Utilities
+    # --------------------------
+
     @staticmethod
     def _script_key(script: str) -> str:
-        """
-        Generate a stable hash key for Lua scripts.
-        """
         return hashlib.sha256(script.encode()).hexdigest()
 
-    def execute(
-        self,
-        script: str,
-        keys: Sequence[str],
-        args: Sequence[Any],
-    ) -> List[Any]:
+    def _get_or_register_script(self, script: str):
         key = self._script_key(script)
 
         lua = self._script_cache.get(key)
@@ -56,11 +56,56 @@ class RedisSyncBackend(Backend):
             lua = self._client.register_script(script)
             self._script_cache[key] = lua
 
-        # Single round-trip execution
-        return lua(keys=list(keys), args=list(args))
+        return lua
+
+    # --------------------------
+    # Core Execution
+    # --------------------------
+
+    def execute(
+        self,
+        script: str,
+        keys: Sequence[str],
+        args: Sequence[Any],
+    ) -> List[Any]:
+        """
+        Execute Lua script atomically.
+
+        Handles:
+        - Script caching
+        - NOSCRIPT fallback
+        - Redis errors
+        """
+        lua = self._get_or_register_script(script)
+
+        try:
+            return lua(keys=list(keys), args=list(args))
+
+        except RedisError as exc:
+            # Safety: clear cache if Redis restarted
+            self._script_cache.clear()
+            raise exc
+
+    # --------------------------
+    # Health & Utility
+    # --------------------------
+
+    def health_check(self) -> bool:
+        """
+        Returns True if Redis is reachable.
+        """
+        try:
+            return self._client.ping()
+        except RedisError:
+            return False
+
+    def get_time(self) -> float:
+        """
+        Get Redis server time (seconds).
+        Useful for debugging / observability.
+        """
+        seconds, microseconds = self._client.time()
+        return seconds + (microseconds / 1_000_000)
 
     def close(self) -> None:
-        """
-        Gracefully close the Redis connection.
-        """
         self._client.close()

@@ -3,10 +3,10 @@ from typing import Callable, Optional
 
 class FastAPIRateLimiter:
     """
-    FastAPI middleware for distributed-rate-limiter.
+    Enterprise-grade FastAPI middleware for distributed-rate-limiter.
 
-    This middleware requires:
-    - fastapi
+    Requirements:
+    - fastapi installed
     - RateLimiter(async_mode=True)
     """
 
@@ -15,7 +15,9 @@ class FastAPIRateLimiter:
         limiter,
         *,
         key_func: Optional[Callable] = None,
+        cost_func: Optional[Callable] = None,
         status_code: int = 429,
+        trust_proxy: bool = False,
     ):
         try:
             import fastapi
@@ -34,14 +36,32 @@ class FastAPIRateLimiter:
         self.JSONResponse = JSONResponse
         self.limiter = limiter
         self.key_func = key_func
+        self.cost_func = cost_func
         self.status_code = status_code
+        self.trust_proxy = trust_proxy
+
+    # -----------------------------------------------------
+    # Identity Resolution
+    # -----------------------------------------------------
+
+    def _resolve_identity(self, request):
+        if self.key_func:
+            return self.key_func(request)
+
+        if self.trust_proxy:
+            forwarded = request.headers.get("x-forwarded-for")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+
+        return request.client.host if request.client else None
+
+    # -----------------------------------------------------
+    # Middleware Entry
+    # -----------------------------------------------------
 
     async def __call__(self, request, call_next):
-        # Resolve identity
-        if self.key_func:
-            identity = self.key_func(request)
-        else:
-            identity = request.client.host if request.client else None
+
+        identity = self._resolve_identity(request)
 
         if not identity:
             return self.JSONResponse(
@@ -49,19 +69,40 @@ class FastAPIRateLimiter:
                 content={"detail": "Rate limit identity missing"},
             )
 
-        allowed, info = await self.limiter.allow_async(identity)
+        cost = 1
+        if self.cost_func:
+            try:
+                cost = int(self.cost_func(request))
+            except Exception:
+                cost = 1
 
+        allowed, info = await self.limiter.allow_async(
+            identity,
+            cost=cost,
+        )
+
+        # --------------------------------------------
+        # Blocked
+        # --------------------------------------------
         if not allowed:
+            headers = {}
+
+            if info:
+                headers.update(info.as_headers())
+                headers["Retry-After"] = str(info.retry_after)
+
             return self.JSONResponse(
                 status_code=self.status_code,
                 content={"detail": "Rate limit exceeded"},
+                headers=headers,
             )
 
+        # --------------------------------------------
+        # Allowed
+        # --------------------------------------------
         response = await call_next(request)
 
         if info:
-            response.headers["X-RateLimit-Limit"] = str(info.limit)
-            response.headers["X-RateLimit-Remaining"] = str(info.remaining)
-            response.headers["X-RateLimit-Reset"] = str(info.reset)
+            response.headers.update(info.as_headers())
 
         return response
